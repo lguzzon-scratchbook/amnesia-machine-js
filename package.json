@@ -4,7 +4,7 @@
   "description": "Implementation of the Hypothetical Amnesia Machine (HAM)",
   "main": "src/index.js",
   "scripts": {
-    "test": "jest"
+    "test": "node --no-warnings node_modules/jest/bin/jest.js"
   },
   "repository": {
     "type": "git",
@@ -26,6 +26,6 @@
   },
   "homepage": "https://github.com/firesight-ai/amnesia-machine-js#readme",
   "devDependencies": {
-    "jest": "^27.0.0"
+    "jest": "^30.2.0"
   }
 }

@@ -1,15 +1,29 @@
 // version 0.1.4
 
+// ============================================================================
+// Constants
+// ============================================================================
+
+const DEFAULT_DUP_TTL_MS = 300000; // 5 minutes
+
+// ============================================================================
+// Custom Error
+// ============================================================================
+
 class HAMError extends Error {
     constructor(message) {
         super(message);
-        this.name = "HAMError";
+        this.name = 'HAMError';
     }
 }
 
-function validateType(value, type) {
-    if (typeof value !== type) {
-        throw new HAMError(`Expected ${type}, got ${typeof value}`);
+// ============================================================================
+// Validation Helpers
+// ============================================================================
+
+function validateType(value, expectedType) {
+    if (typeof value !== expectedType) {
+        throw new HAMError(`Expected ${expectedType}, got ${typeof value}`);
     }
 }
 
@@ -19,9 +33,13 @@ function validateVectorClock(value) {
     }
 }
 
+// ============================================================================
+// VectorClock - Implements vector clock logic for distributed event ordering
+// ============================================================================
+
 class VectorClock {
-    constructor(clock = {}) {
-        this.clock = new Map(Object.entries(clock));
+    constructor(initialClock = {}) {
+        this.clock = new Map(Object.entries(initialClock));
     }
 
     increment(nodeId) {
@@ -31,30 +49,34 @@ class VectorClock {
 
     merge(otherClock) {
         for (const [nodeId, timestamp] of otherClock.clock) {
-            if (!this.clock.has(nodeId) || this.clock.get(nodeId) < timestamp) {
+            const currentTimestamp = this.clock.get(nodeId) || 0;
+            if (timestamp > currentTimestamp) {
                 this.clock.set(nodeId, timestamp);
             }
         }
     }
 
     compare(otherClock) {
-        let isGreater = false;
-        let isLess = false;
+        let thisIsGreater = false;
+        let otherIsGreater = false;
 
-        const allNodeIds = new Set([...this.clock.keys(), ...otherClock.clock.keys()]);
+        const allNodeIds = new Set([
+            ...this.clock.keys(),
+            ...otherClock.clock.keys()
+        ]);
 
         for (const nodeId of allNodeIds) {
-            const thisTime = this.clock.get(nodeId) || 0;
-            const otherTime = otherClock.clock.get(nodeId) || 0;
+            const thisTimestamp = this.clock.get(nodeId) || 0;
+            const otherTimestamp = otherClock.clock.get(nodeId) || 0;
 
-            if (thisTime > otherTime) isGreater = true;
-            if (thisTime < otherTime) isLess = true;
+            if (thisTimestamp > otherTimestamp) thisIsGreater = true;
+            if (thisTimestamp < otherTimestamp) otherIsGreater = true;
         }
 
-        if (isGreater && !isLess) return 1;  // this happens-after other
-        if (isLess && !isGreater) return -1; // this happens-before other
-        if (!isLess && !isGreater) return 0; // equal
-        return null; // concurrent
+        if (thisIsGreater && !otherIsGreater) return 1;   // this happens-after other
+        if (otherIsGreater && !thisIsGreater) return -1;  // this happens-before other
+        if (!thisIsGreater && !otherIsGreater) return 0;  // equal
+        return null; // concurrent (both are greater in different dimensions)
     }
 
     toString() {
@@ -74,66 +96,106 @@ class VectorClock {
     }
 }
 
+// ============================================================================
+// State - Manages node state metadata (GunDB compatible)
+// ============================================================================
+
 class State {
     static is(node, key) {
         validateType(node, 'object');
         validateType(key, 'string');
-        return node && node._ && node._['>'] && node._['>'][key] instanceof VectorClock;
+
+        const stateMap = node?.['_']?.['>'];
+        return stateMap?.[key] instanceof VectorClock;
     }
 
-    static ify(node, key, state, val, soul) {
+    static ify(node, key, state, value, soul) {
         validateType(node, 'object');
         validateType(key, 'string');
         validateVectorClock(state);
-        if(!node || !node._){ throw new HAMError('Invalid node structure') }
-        const states = node._['>'] = node._['>'] || {};
-        if(!states[key] || state.compare(states[key]) === 1){
-            states[key] = state;
-            if(val !== undefined){
-                node[key] = val;
-                if(soul){ node._['#'] = soul }
+
+        if (!node?.['_']) {
+            throw new HAMError('Invalid node structure');
+        }
+
+        const stateMap = node['_']['>'] = node['_']['>'] || {};
+        const existingState = stateMap[key];
+        const shouldUpdate = !existingState || state.compare(existingState) === 1;
+
+        if (shouldUpdate) {
+            stateMap[key] = state;
+            if (value !== undefined) {
+                node[key] = value;
+                if (soul) {
+                    node['_']['#'] = soul;
+                }
             }
         }
+
         return node;
     }
 
     static getState(node, key) {
         validateType(node, 'object');
         validateType(key, 'string');
-        return (node && node._ && node._['>'] && node._['>'][key]) || new VectorClock();
+
+        const stateValue = node?.['_']?.['>']?.[key];
+        return stateValue || new VectorClock();
     }
 }
 
+// ============================================================================
+// Dup - Deduplication tracking with TTL
+// ============================================================================
+
 class Dup {
     constructor(options = {}) {
-        this.s = new Map();
-        this.ttl = options.ttl || 300000; // 5 minutes default
+        this.entries = new Map();
+        this.ttl = options.ttl || DEFAULT_DUP_TTL_MS;
+    }
+
+    get s() {
+        return this.entries;
     }
 
     track(id) {
         validateType(id, 'string');
-        if(!id){ return }
-        if(!this.s.has(id)){
-            this.s.set(id, { ts: Date.now(), clock: new VectorClock() });
+
+        if (!id) return undefined;
+
+        if (!this.entries.has(id)) {
+            this.entries.set(id, {
+                ts: Date.now(),
+                clock: new VectorClock()
+            });
         }
-        return this.s.get(id);
+
+        return this.entries.get(id);
     }
 
     check(id) {
         validateType(id, 'string');
-        if(!id){ return }
-        return this.s.get(id);
+
+        if (!id) return undefined;
+
+        return this.entries.get(id);
     }
 
     free() {
         const now = Date.now();
-        for(const [id, data] of this.s){
-            if(data.ts && (now - data.ts) > this.ttl){
-                this.s.delete(id);
+
+        for (const [id, data] of this.entries) {
+            const isExpired = data.ts && (now - data.ts) > this.ttl;
+            if (isExpired) {
+                this.entries.delete(id);
             }
         }
     }
 }
+
+// ============================================================================
+// HAM - Hypothetical Amnesia Machine (conflict resolution engine)
+// ============================================================================
 
 class HAM {
     constructor(nodeId) {
@@ -146,38 +208,54 @@ class HAM {
         validateVectorClock(incomingState);
         validateVectorClock(currentState);
 
+        // If machine state is ahead of incoming, defer the update
+        if (machineState.compare(incomingState) === 1) {
+            return { defer: true };
+        }
+
         const comparison = incomingState.compare(currentState);
 
-        if(machineState.compare(incomingState) === 1){
-            return {defer: true};
+        // Incoming is older than current - treat as historical
+        if (comparison === -1) {
+            return { historical: true };
         }
-        if(comparison === -1){
-            return {historical: true};
+
+        // Incoming is newer than current - accept incoming
+        if (comparison === 1) {
+            return { converge: true, incoming: true };
         }
-        if(comparison === 1){
-            return {converge: true, incoming: true};
-        }
-        if(comparison === 0){
-            incomingValue = this.unwrap(incomingValue);
-            currentValue = this.unwrap(currentValue);
-            if(incomingValue === currentValue){
-                return {state: true};
+
+        // States are equal (comparison === 0) - use lexicographic comparison
+        if (comparison === 0) {
+            const unwrappedIncoming = this.unwrap(incomingValue);
+            const unwrappedCurrent = this.unwrap(currentValue);
+
+            if (unwrappedIncoming === unwrappedCurrent) {
+                return { state: true };
             }
-            if(String(incomingValue) < String(currentValue)){
-                return {converge: true, current: true};
+
+            const incomingStr = String(unwrappedIncoming);
+            const currentStr = String(unwrappedCurrent);
+
+            if (incomingStr < currentStr) {
+                return { converge: true, current: true };
             }
-            if(String(currentValue) < String(incomingValue)){
-                return {converge: true, incoming: true};
+            if (currentStr < incomingStr) {
+                return { converge: true, incoming: true };
             }
         }
-        return {err: new HAMError("Concurrent updates detected: "+ incomingValue +" and "+ currentValue)};
+
+        // Concurrent updates that couldn't be resolved
+        return {
+            err: new HAMError(
+                `Concurrent updates detected: ${incomingValue} and ${currentValue}`
+            )
+        };
     }
 
-    unwrap(val) {
-        if(val && val['#'] && val['.'] && val['>']){
-            return val[':'];
-        }
-        return val;
+    unwrap(value) {
+        const isWrapped = value && value['#'] && value['.'] && value['>'];
+        return isWrapped ? value[':'] : value;
     }
 
     union(vertex, node) {
@@ -189,13 +267,13 @@ class HAM {
 
         const machineState = this.machineState();
 
-        // Handle Gun's metadata
-        if (node._ && node._['#']) {
-            vertex._ = vertex._ || {};
-            vertex._['#'] = node._['#'];
+        // Copy soul from incoming node if present
+        if (node['_']?.['#']) {
+            vertex['_'] = vertex['_'] || {};
+            vertex['_']['#'] = node['_']['#'];
         }
 
-        for (let key in node) {
+        for (const key in node) {
             if (key === '_') continue;
 
             const incomingState = State.getState(node, key);
@@ -203,15 +281,25 @@ class HAM {
             const incomingValue = node[key];
             const currentValue = vertex[key];
 
-            const result = this.ham(machineState, incomingState, currentState, incomingValue, currentValue);
+            const result = this.ham(
+                machineState,
+                incomingState,
+                currentState,
+                incomingValue,
+                currentValue
+            );
 
             if (result.err) {
                 this.log('error', result.err.message);
                 continue;
             }
 
-            if (result.state || result.historical || result.current) continue;
+            // Skip if no update needed
+            if (result.state || result.historical || result.current) {
+                continue;
+            }
 
+            // Apply update for defer or incoming
             if (result.defer || result.incoming) {
                 State.ify(vertex, key, incomingState, incomingValue);
             }
@@ -226,36 +314,32 @@ class HAM {
         return state;
     }
 
-    graph(graph, soul, key, val, state) {
+    graph(graph, soul, key, value, state) {
         validateType(graph, 'object');
         validateType(soul, 'string');
         validateType(key, 'string');
         validateVectorClock(state);
-        graph[soul] = State.ify(graph[soul], key, state, val, soul);
+
+        graph[soul] = State.ify(graph[soul], key, state, value, soul);
         return graph;
     }
 
-    graphOperation(graph, soul, key, val, state) {
+    graphOperation(graph, soul, key, value, state) {
         validateType(graph, 'object');
         validateType(soul, 'string');
         validateType(key, 'string');
         validateVectorClock(state);
 
         if (!graph[soul]) {
-            graph[soul] = { _: { '#': soul, '>': {} } };
+            graph[soul] = {
+                '_': {
+                    '#': soul,
+                    '>': {}
+                }
+            };
         }
 
-        return this.graph(graph, soul, key, val, state);
-    }
-
-    log(level, message) {
-        if (this.debugMode) {
-            console.log(`[HAM ${level.toUpperCase()}] ${message}`);
-        }
-    }
-
-    setDebugMode(mode) {
-        this.debugMode = mode;
+        return this.graph(graph, soul, key, value, state);
     }
 
     mergeGraphs(localGraph, incomingGraph) {
@@ -276,7 +360,21 @@ class HAM {
 
         return mergedGraph;
     }
+
+    log(level, message) {
+        if (this.debugMode) {
+            console.log(`[HAM ${level.toUpperCase()}] ${message}`);
+        }
+    }
+
+    setDebugMode(enabled) {
+        this.debugMode = enabled;
+    }
 }
+
+// ============================================================================
+// Exports
+// ============================================================================
 
 module.exports = {
     VectorClock,
