@@ -80,4 +80,34 @@ npm test       # Run Jest tests
 
 ## Testing
 
-Tests are in `__tests__/ham.test.js`. Current coverage is minimal - only basic initialization tests exist. When adding features, ensure corresponding tests are added.
+Tests are in `__tests__/ham.test.js`. Jest enforces 95%+ coverage across all metrics (statements, branches, functions, lines). Use `npm test` to run tests.
+
+## Intent Layer
+
+**All code follows the conventions documented in this AGENTS.md.** No child Intent Layer nodes exist - this is a focused library implementing a single algorithm (HAM) with a flat, cohesive structure.
+
+### Global Invariants
+
+- **Coverage Requirements**: All public APIs must have corresponding tests. Jest enforces 95%+ coverage across statements, branches, functions, and lines.
+- **VectorClock Usage**: All state comparisons must use VectorClock instances. Use `VectorClock.gunStateToVectorClock()` for GunDB compatibility and `validateVectorClock()` for type checking.
+- **Error Handling**: All domain errors throw `HAMError` instances. Use `validateType()` and `validateVectorClock()` helpers for validation.
+- **Performance**: Avoid creating new objects in hot paths. Use pre-allocated result objects (RESULT_DEFER, RESULT_HISTORICAL, etc.) and shared constants.
+
+### Code Ownership
+
+- **src/ham.js**: Core implementation containing VectorClock, State, Dup, and HAM classes. This is the heart of the library.
+- **src/index.js**: Re-exports all classes + `_internal` helpers for testing. Minimal entry point.
+- **__tests__/ham.test.js**: Comprehensive Jest test suite covering all classes and validation helpers.
+
+### When to Modify
+
+- **Adding features**: Add tests in `__tests__/ham.test.js` using existing Jest patterns. Ensure 95%+ coverage.
+- **Optimizing**: Focus on hot paths in VectorClock.compare() and HAM.ham() which are called frequently in union operations.
+- **Breaking changes**: Consider GunDB compatibility when modifying metadata structure (`node._ = { '#': soul, '>': { [key]: VectorClock } }`).
+
+### Anti-patterns
+
+- Never bypass VectorClock for state comparisons; use the provided compare() method.
+- Avoid throwing generic errors; always use HAMError with descriptive messages.
+- Don't modify result objects (RESULT_DEFER, etc.) - they are frozen constants.
+- Never export `_internal` helpers as part of public API - they exist only for test coverage.
