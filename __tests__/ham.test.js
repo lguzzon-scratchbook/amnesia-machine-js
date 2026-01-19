@@ -1,4 +1,4 @@
-const { VectorClock, State, Dup, HAM } = require('../src/ham');
+const { VectorClock, State, Dup, HAM, _internal } = require('../src/ham');
 
 describe('VectorClock', () => {
     describe('constructor', () => {
@@ -199,6 +199,11 @@ describe('State', () => {
 
         test('should return false when state is not a VectorClock', () => {
             const node = { _: { '>': { key1: 12345 } } };
+            expect(State.is(node, 'key1')).toBe(false);
+        });
+
+        test('should return false when state map exists but is undefined', () => {
+            const node = { _: { '>': undefined } };
             expect(State.is(node, 'key1')).toBe(false);
         });
 
@@ -690,6 +695,23 @@ describe('HAM', () => {
         test('should throw on invalid parameters', () => {
             expect(() => ham.graphOperation('string', 'soul', 'key', 'val', new VectorClock())).toThrow();
         });
+
+        test('should throw on invalid soul (non-string)', () => {
+            const graph = {};
+            const state = new VectorClock({ node1: 1 });
+            expect(() => ham.graphOperation(graph, 123, 'key', 'val', state)).toThrow('Expected string');
+        });
+
+        test('should throw on invalid key (non-string)', () => {
+            const graph = {};
+            const state = new VectorClock({ node1: 1 });
+            expect(() => ham.graphOperation(graph, 'soul', 123, 'val', state)).toThrow('Expected string');
+        });
+
+        test('should throw on invalid state (non-VectorClock)', () => {
+            const graph = {};
+            expect(() => ham.graphOperation(graph, 'soul', 'key', 'val', {})).toThrow('Expected VectorClock');
+        });
     });
 
     describe('mergeGraphs', () => {
@@ -806,5 +828,61 @@ describe('Integration Tests', () => {
         const retrievedState = State.getState(graph.item, 'value');
         const backToGun = VectorClock.vectorClockToGunState(retrievedState);
         expect(backToGun).toEqual(gunState);
+    });
+});
+
+describe('Internal Validation Helpers (test-only exports)', () => {
+    const { validateType, validateVectorClock } = _internal;
+
+    describe('validateType', () => {
+        test('should not throw when type matches expected', () => {
+            expect(() => validateType('string', 'string')).not.toThrow();
+            expect(() => validateType(123, 'number')).not.toThrow();
+            expect(() => validateType(true, 'boolean')).not.toThrow();
+            expect(() => validateType({}, 'object')).not.toThrow();
+        });
+
+        test('should throw HAMError when type does not match expected', () => {
+            expect(() => validateType(123, 'string')).toThrow('Expected string, got number');
+            expect(() => validateType('string', 'number')).toThrow('Expected number, got string');
+            expect(() => validateType({}, 'string')).toThrow('Expected string, got object');
+            expect(() => validateType(null, 'string')).toThrow('Expected string, got object');
+        });
+
+        test('should throw HAMError (with correct name)', () => {
+            try {
+                validateType(123, 'string');
+                fail('Should have thrown HAMError');
+            } catch (error) {
+                expect(error.name).toBe('HAMError');
+            }
+        });
+    });
+
+    describe('validateVectorClock', () => {
+        test('should not throw when value is a VectorClock instance', () => {
+            const vc = new VectorClock();
+            expect(() => validateVectorClock(vc)).not.toThrow();
+
+            const vcWithState = new VectorClock({ node1: 1, node2: 2 });
+            expect(() => validateVectorClock(vcWithState)).not.toThrow();
+        });
+
+        test('should throw HAMError when value is not a VectorClock instance', () => {
+            expect(() => validateVectorClock({})).toThrow('Expected VectorClock, got object');
+            expect(() => validateVectorClock([])).toThrow('Expected VectorClock, got object');
+            expect(() => validateVectorClock(null)).toThrow('Expected VectorClock, got object');
+            expect(() => validateVectorClock('string')).toThrow('Expected VectorClock, got string');
+            expect(() => validateVectorClock(123)).toThrow('Expected VectorClock, got number');
+        });
+
+        test('should throw HAMError (with correct name)', () => {
+            try {
+                validateVectorClock({});
+                fail('Should have thrown HAMError');
+            } catch (error) {
+                expect(error.name).toBe('HAMError');
+            }
+        });
     });
 });

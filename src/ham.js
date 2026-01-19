@@ -390,5 +390,10 @@ module.exports = {
     VectorClock,
     State,
     Dup,
-    HAM
+    HAM,
+    // Internal test helpers (not part of public API)
+    _internal: {
+        validateType,
+        validateVectorClock
+    }
 };

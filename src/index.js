@@ -1,8 +1,9 @@
-const { VectorClock, State, Dup, HAM } = require('./ham');
+const { VectorClock, State, Dup, HAM, _internal } = require('./ham');
 
 module.exports = {
     VectorClock,
     State,
     Dup,
-    HAM
+    HAM,
+    _internal
 };
