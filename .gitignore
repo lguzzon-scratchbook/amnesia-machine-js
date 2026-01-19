@@ -254,3 +254,20 @@ dist
 next-env.d.ts
 
 .aider*
+
+# AI CLI coder tools and cache directories
+.agent/
+.agents/
+.claude/
+.codex/
+.cursor/
+.factory/
+.gemini/
+.goose/
+.kilocode/
+.opencode/
+.roo/
+.windsurf/
+~/
+.github/skills/
+skills/
