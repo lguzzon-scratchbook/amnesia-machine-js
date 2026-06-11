@@ -1,5 +1,73 @@
 const { VectorClock, State, Dup, HAM, _internal } = require('../src/ham');
 
+describe('ReadOnlyVectorClock', () => {
+    test('should not allow increment operation', () => {
+        const ReadOnlyVectorClock = require('../src/ham')._internal.ReadOnlyVectorClock;
+        const rovc = new ReadOnlyVectorClock();
+        expect(() => rovc.increment('node')).toThrow('Cannot mutate read-only VectorClock');
+    });
+
+    test('should not allow merge operation', () => {
+        const ReadOnlyVectorClock = require('../src/ham')._internal.ReadOnlyVectorClock;
+        const rovc = new ReadOnlyVectorClock();
+        expect(() => rovc.merge(new VectorClock())).toThrow('Cannot mutate read-only VectorClock');
+    });
+
+    test('should extend VectorClock', () => {
+        const ReadOnlyVectorClock = require('../src/ham')._internal.ReadOnlyVectorClock;
+        const rovc = new ReadOnlyVectorClock();
+        expect(rovc).toBeInstanceOf(VectorClock);
+    });
+
+    test('should have empty clock Map', () => {
+        const ReadOnlyVectorClock = require('../src/ham')._internal.ReadOnlyVectorClock;
+        const rovc = new ReadOnlyVectorClock();
+        expect(rovc.clock.size).toBe(0);
+    });
+
+    test('should support compare operation', () => {
+        const ReadOnlyVectorClock = require('../src/ham')._internal.ReadOnlyVectorClock;
+        const rovc = new ReadOnlyVectorClock();
+        expect(rovc.compare(new VectorClock())).toBe(0);
+        expect(rovc.compare(new VectorClock({ node: 1 }))).toBe(-1);
+    });
+
+    test('should support toString operation', () => {
+        const ReadOnlyVectorClock = require('../src/ham')._internal.ReadOnlyVectorClock;
+        const rovc = new ReadOnlyVectorClock();
+        expect(rovc.toString()).toBe('{}');
+    });
+});
+
+describe('EMPTY_VECTOR_CLOCK', () => {
+    test('should be an instance of VectorClock', () => {
+        const hamModule = require('../src/ham');
+        expect(hamModule._internal.EMPTY_VECTOR_CLOCK).toBeInstanceOf(VectorClock);
+    });
+
+    test('should be a singleton (same reference)', () => {
+        const hamModule = require('../src/ham');
+        const vc1 = hamModule._internal.EMPTY_VECTOR_CLOCK;
+        const vc2 = require('../src/ham')._internal.EMPTY_VECTOR_CLOCK;
+        expect(vc1).toBe(vc2);
+    });
+
+    test('should have empty clock', () => {
+        const hamModule = require('../src/ham');
+        expect(hamModule._internal.EMPTY_VECTOR_CLOCK.clock.size).toBe(0);
+    });
+
+    test('should throw on increment attempt', () => {
+        const hamModule = require('../src/ham');
+        expect(() => hamModule._internal.EMPTY_VECTOR_CLOCK.increment('node')).toThrow('Cannot mutate read-only VectorClock');
+    });
+
+    test('should throw on merge attempt', () => {
+        const hamModule = require('../src/ham');
+        expect(() => hamModule._internal.EMPTY_VECTOR_CLOCK.merge(new VectorClock())).toThrow('Cannot mutate read-only VectorClock');
+    });
+});
+
 describe('VectorClock', () => {
     describe('constructor', () => {
         test('should create empty clock by default', () => {
@@ -106,6 +174,18 @@ describe('VectorClock', () => {
         test('should return null for concurrent clocks', () => {
             const vc1 = new VectorClock({ node1: 2, node2: 1 });
             const vc2 = new VectorClock({ node1: 1, node2: 2 });
+            expect(vc1.compare(vc2)).toBeNull();
+        });
+
+        test('should return null for concurrent with early exit in first loop', () => {
+            const vc1 = new VectorClock({ node1: 2, node2: 2 });
+            const vc2 = new VectorClock({ node1: 1, node2: 3 });
+            expect(vc1.compare(vc2)).toBeNull();
+        });
+
+        test('should return null for concurrent with early exit in second loop', () => {
+            const vc1 = new VectorClock({ node1: 1, node2: 2, node3: 1 });
+            const vc2 = new VectorClock({ node1: 1, node2: 2, node4: 1 });
             expect(vc1.compare(vc2)).toBeNull();
         });
 
@@ -274,18 +354,25 @@ describe('State', () => {
             expect(State.getState(node, 'key1')).toBe(state);
         });
 
-        test('should return empty VectorClock when state does not exist', () => {
+        test('should return EMPTY_VECTOR_CLOCK singleton when state does not exist', () => {
+            const hamModule = require('../src/ham');
             const node = { _: { '>': {} } };
             const result = State.getState(node, 'key1');
-            expect(result).toBeInstanceOf(VectorClock);
-            expect(result.clock.size).toBe(0);
+            expect(result).toBe(hamModule._internal.EMPTY_VECTOR_CLOCK);
         });
 
-        test('should return empty VectorClock when node has no metadata', () => {
+        test('should return EMPTY_VECTOR_CLOCK singleton when node has no metadata', () => {
+            const hamModule = require('../src/ham');
             const node = {};
             const result = State.getState(node, 'key1');
-            expect(result).toBeInstanceOf(VectorClock);
-            expect(result.clock.size).toBe(0);
+            expect(result).toBe(hamModule._internal.EMPTY_VECTOR_CLOCK);
+        });
+
+        test('should return EMPTY_VECTOR_CLOCK singleton when state map is missing', () => {
+            const hamModule = require('../src/ham');
+            const node = { _: {} };
+            const result = State.getState(node, 'key1');
+            expect(result).toBe(hamModule._internal.EMPTY_VECTOR_CLOCK);
         });
 
         test('should throw on invalid node type', () => {
